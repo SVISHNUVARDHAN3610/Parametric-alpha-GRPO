@@ -1,0 +1,70 @@
+from types import SimpleNamespace
+
+import pytest
+
+from alpha_grpo.campaign import _truncate_uncommitted, latest_checkpoint
+from alpha_grpo.checkpoint import atomic_directory
+from alpha_grpo.inference import InferenceError
+from alpha_grpo.inference_worker import Engine
+from alpha_grpo.sync import Policy
+
+
+def test_failed_atomic_checkpoint_leaves_no_committed_directory(tmp_path):
+    destination = tmp_path / "step-000001"
+    with pytest.raises(RuntimeError):
+        with atomic_directory(destination) as partial:
+            (partial / "training.pt").write_text("partial")
+            raise RuntimeError("interrupted")
+    assert latest_checkpoint(tmp_path) is None
+    with atomic_directory(destination) as partial:
+        (partial / "complete").touch()
+    incomplete = tmp_path / "step-000002"
+    incomplete.mkdir()
+    assert latest_checkpoint(tmp_path) == destination
+
+
+def test_resume_trims_steps_after_committed_checkpoint(tmp_path):
+    path = tmp_path / "steps.jsonl"
+    path.write_text('{"version": 1}\n{"version": 2}\n{"vers')
+    _truncate_uncommitted(path, "version", 1)
+    assert path.read_text() == '{"version": 1}\n'
+
+
+def test_reference_cannot_receive_policy_weights():
+    engine = Engine.__new__(Engine)
+    engine.version = 0
+    engine.role = "reference"
+    engine.transfer = False
+    engine.updating = False
+    with pytest.raises(RuntimeError, match="Weight transfer is unavailable"):
+        engine.execute("start", version=1)
+    with pytest.raises(RuntimeError, match="stale"):
+        engine.execute("score", version=1, sequences=[])
+
+
+def test_failed_native_transfer_uses_checkpoint_before_acknowledging(tmp_path, monkeypatch):
+    policy = Policy(start=None, source=None, tokenizer=None, trainer=None, mode="auto",
+                    timeout=10, root=tmp_path)
+    policy.client = SimpleNamespace()
+    policy.acknowledged_version = 1
+    calls = []
+
+    def fail(version):
+        assert policy.acknowledged_version is None
+        calls.append(("nccl", version))
+        raise InferenceError("partial transfer")
+
+    def checkpoint(version):
+        assert policy.acknowledged_version is None
+        calls.append(("checkpoint", version))
+
+    def verify(version):
+        assert policy.acknowledged_version is None
+        calls.append(("verify", version))
+
+    monkeypatch.setattr(policy, "_nccl", fail)
+    monkeypatch.setattr(policy, "_checkpoint", checkpoint)
+    monkeypatch.setattr(policy, "_verify", verify)
+    assert policy.synchronize(2) == "checkpoint"
+    assert policy.acknowledged_version == 2
+    assert calls == [("nccl", 2), ("checkpoint", 2), ("verify", 2)]

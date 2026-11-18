@@ -1,0 +1,1 @@
+"""Parametric GRPO research code."""
