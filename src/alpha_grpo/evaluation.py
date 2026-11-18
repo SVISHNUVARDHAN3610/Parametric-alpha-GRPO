@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 from pathlib import Path
 
@@ -39,7 +40,13 @@ def evaluate(model, revision, data, output, tasks, device, greedy_only, limit,
     manifest = read_metadata(data)
     if Path(model).is_dir():
         source = str(Path(model).resolve())
-        model_revision = None
+        fingerprint = hashlib.sha256()
+        for path in sorted(Path(source).glob("*.safetensors")):
+            fingerprint.update(path.name.encode())
+            with path.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    fingerprint.update(chunk)
+        model_revision = fingerprint.hexdigest()
     else:
         if model == manifest["model"] and revision == "main":
             revision = manifest["model_revision"]
@@ -82,6 +89,8 @@ def evaluate(model, revision, data, output, tasks, device, greedy_only, limit,
             model=model, model_revision=model_revision, datasets=benchmarks, limit=limit,
             tasks=tasks, device=device, fewshot_seed=42, max_new_tokens=512,
             label=label or output.name, training_seed=training_seed,
+            checkpoint_step=(int(Path(model).name[5:]) if Path(model).name.startswith("step-")
+                             and Path(model).name[5:].isdigit() else None),
         ), indent=2), encoding="utf-8")
         with (temporary / "items.jsonl").open("w", encoding="utf-8") as stream:
             for task in tasks:

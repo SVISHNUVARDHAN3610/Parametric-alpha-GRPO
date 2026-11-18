@@ -23,6 +23,11 @@ def selected_scores(ids, rows):
 
 class Engine:
     def __init__(self, options):
+        import torch
+
+        self.physical_device = str(torch.cuda.get_device_properties(0).uuid)
+        if self.physical_device != options["expected_uuid"]:
+            raise RuntimeError("CUDA device UUID differs from the requested physical device")
         from vllm import LLM
         from vllm.config import WeightTransferConfig
 
@@ -46,7 +51,7 @@ class Engine:
     def execute(self, operation, **args):
         if operation == "health":
             return dict(version=self.version, role=self.role,
-                        physical_device=os.environ["CUDA_VISIBLE_DEVICES"])
+                        physical_device=self.physical_device)
         if operation == "fingerprint":
             if self.updating or args["version"] != self.version:
                 raise RuntimeError("Cannot inspect a stale or partially updated policy")

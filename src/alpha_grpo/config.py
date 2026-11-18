@@ -45,7 +45,7 @@ class TrainingConfig:
             raise ValueError("Training sizes must be positive")
         if self.group_size < 2 or self.filter_cap < self.prompts_per_step:
             raise ValueError("Invalid collection limits")
-        if self.max_prompt + self.max_completion > 4096:
+        if self.max_prompt + self.max_completion + 1 > 4096:
             raise ValueError("Training context exceeds OLMo 2 context")
         if self.optimizer not in {"gpu", "cpu"}:
             raise ValueError("Invalid optimizer backend")

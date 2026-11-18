@@ -19,6 +19,10 @@ def paired_interval(candidate, baseline, *, draws=1000):
     return [estimates[int(0.025 * draws)], estimates[min(draws - 1, int(0.975 * draws))]]
 
 
+def absolute_interval(scores):
+    return paired_interval(scores, dict.fromkeys(scores, 0.0))
+
+
 def _plot(plt, output, name, x_label, y_label, populate):
     figure, axis = plt.subplots(figsize=(9, 5), layout="constrained")
     populate(axis)
@@ -45,6 +49,9 @@ def analyze(runs, evaluations, baseline, output):
     if baseline is not None:
         baseline_protocol = json.loads((baseline / "protocol.json").read_text(encoding="utf-8"))
         for row in jsonl(baseline / "items.jsonl"):
+            key = (row["subtask"], row["item"])
+            if key in baseline_groups[row["task"], row["mode"]]:
+                raise ValueError("Duplicate baseline evaluation item")
             baseline_groups[row["task"], row["mode"]][row["subtask"], row["item"]] = row["score"]
     for directory in evaluations:
         protocol = json.loads((directory / "protocol.json").read_text(encoding="utf-8"))
@@ -62,13 +69,18 @@ def analyze(runs, evaluations, baseline, output):
             lengths = [row["output_tokens"] for row in items if row["output_tokens"] is not None]
             score = mean(scores.values())
             comparison = baseline_groups.get((task, mode))
+            if baseline is not None and comparison is None:
+                raise ValueError(f"Baseline lacks {task} / {mode}")
             row = dict(label=protocol["label"], evaluation=str(directory), task=task, mode=mode,
-                       score=score, items=len(items), mean_output_tokens=mean(lengths) if lengths else None,
+                       score=score, absolute_95=absolute_interval(scores), items=len(items), mean_output_tokens=mean(lengths) if lengths else None,
                        delta=score - mean(comparison.values()) if comparison else None,
                        paired_95=paired_interval(scores, comparison) if comparison else None)
             eval_summary.append(row)
             if protocol["training_seed"] is not None:
-                seed_scores[protocol["label"], task, mode][protocol["training_seed"]] = score
+                identity = (protocol["label"], protocol.get("checkpoint_step"), task, mode)
+                if protocol["training_seed"] in seed_scores[identity]:
+                    raise ValueError(f"Duplicate training seed for {identity}")
+                seed_scores[identity][protocol["training_seed"]] = score
     for row in eval_summary:
         row["pareto"] = (
             not any(other["task"] == row["task"] and other["mode"] == row["mode"]
@@ -115,9 +127,9 @@ def analyze(runs, evaluations, baseline, output):
                 drift[label, group["task"], value, (group["version"] // 25) * 25].append(length)
 
     variability = [
-        dict(label=label, task=task, mode=mode, seeds=scores,
+        dict(label=label, checkpoint_step=step, task=task, mode=mode, seeds=scores,
              standard_deviation=stdev(scores.values()) if len(scores) > 1 else None)
-        for (label, task, mode), scores in seed_scores.items()
+        for (label, step, task, mode), scores in seed_scores.items()
     ]
     with atomic_directory(output) as temporary:
         (temporary / "summary.json").write_text(json.dumps(
@@ -155,6 +167,15 @@ def analyze(runs, evaluations, baseline, output):
                                 if run == label)
                 axis.plot([point[0] for point in points], [point[1] for point in points],
                           marker=".", label=label)
+
+        def theoretical_share(axis):
+            ratios = list(range(1, 101))
+            for alpha in (0.0, 0.5, 1.0):
+                axis.plot(ratios, [ratio ** alpha / (1 + ratio ** alpha) for ratio in ratios],
+                          label=f"alpha={alpha:g}")
+
+        _plot(plt, temporary, "two-response-weight-share", "Long / short response length",
+              "Long-response weight share at equal absolute advantage", theoretical_share)
 
         def efficiency(axis):
             for run in run_summary:

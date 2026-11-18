@@ -44,7 +44,8 @@ def hardware():
         name = nvml.nvmlDeviceGetName(handle)
         devices.append(dict(index=index, uuid=uuid, name=name,
                             bytes=nvml.nvmlDeviceGetMemoryInfo(handle).total))
-    return devices
+    return sorted(devices, key=lambda item: nvml.nvmlDeviceGetPciInfo(
+        nvml.nvmlDeviceGetHandleByIndex(item["index"])).busId)
 
 
 class ResourceMonitor:
@@ -220,6 +221,8 @@ def collect(study, experiment, seed, prompts, state, policy, reference, tokenize
         ]))
         if len(groups) == config.prompts_per_step:
             break
+    if len(groups) != config.prompts_per_step:
+        return RolloutBatch(state.version, [])
     return RolloutBatch(state.version, groups)
 
 
@@ -285,7 +288,8 @@ def _truncate_uncommitted(path, key, boundary):
 def train(study, experiment_name, seed, data, root, checkpoint_root, resume, gate=False,
           steps_override=None, max_new_steps=None):
     devices = hardware()
-    os.environ["CUDA_VISIBLE_DEVICES"] = devices[0]["uuid"]
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     import torch
     from .trainer import Trainer
 
@@ -325,6 +329,9 @@ def train(study, experiment_name, seed, data, root, checkpoint_root, resume, gat
         trainer = Trainer(source, tokenizer, study.training, experiment)
         state = RunState()
         if resume:
+            previous_run = json.loads((root / "run.json").read_text(encoding="utf-8"))
+            if previous_run["identity"] != identity:
+                raise ValueError("Output directory belongs to a different experiment")
             previous = latest_checkpoint(checkpoint_root)
             if previous is None:
                 raise FileNotFoundError("No complete checkpoint to resume")

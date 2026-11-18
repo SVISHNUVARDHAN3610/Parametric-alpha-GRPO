@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import json
 import random
 import re
@@ -172,6 +173,10 @@ def prepare(study, output, verifier_revision):
                 for item in specs:
                     if item["func_name"] not in registry:
                         raise ValueError(f"Unsupported constraint {item['func_name']!r} on row {index}")
+                    inspect.signature(registry[item["func_name"]]).bind("", **{
+                        key: value for key, value in item.items()
+                        if key != "func_name" and value is not None
+                    })
                 verifier = dict(constraints=specs)
             else:
                 answer = row["ground_truth"].strip()

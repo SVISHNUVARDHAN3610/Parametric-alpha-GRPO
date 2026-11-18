@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import shutil
 import socket
@@ -107,10 +108,24 @@ class Policy:
         sequence = [(prompt, response)]
         expected = self.trainer.score(sequence)[0]
         actual = self.client.score(sequence, version=version)[0]
-        if any(abs(left - right) > 0.25 for left, right in zip(expected, actual, strict=True)):
+        if any(not math.isfinite(left) or not math.isfinite(right) or abs(left - right) > 0.25
+               for left, right in zip(expected, actual, strict=True)):
             raise InferenceError(f"Policy canary disagrees with the trainer: {expected} vs {actual}")
 
     def synchronize(self, version):
+        try:
+            return self._synchronize(version)
+        except Exception:
+            if self.mode != "auto":
+                raise
+            LOGGER.exception("Policy startup or synchronization failed; using checkpoint transfer")
+            self.mode = "checkpoint"
+            self._checkpoint(version)
+            self._verify(version)
+            self.acknowledged_version = version
+            return "checkpoint"
+
+    def _synchronize(self, version):
         if self.acknowledged_version == version:
             return "unchanged"
         self.acknowledged_version = None

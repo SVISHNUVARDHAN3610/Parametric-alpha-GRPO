@@ -90,7 +90,10 @@ class Trainer:
         was_training = self.model.training
         self.model.eval()
         try:
-            return [values.cpu().tolist() for values in self.logprobs(sequences)]
+            values = self.logprobs(sequences)
+            if any(not torch.isfinite(item).all().item() for item in values):
+                raise FloatingPointError("Nonfinite trainer scoring result")
+            return [item.cpu().tolist() for item in values]
         finally:
             self.model.train(was_training)
 

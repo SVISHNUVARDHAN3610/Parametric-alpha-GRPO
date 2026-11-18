@@ -25,11 +25,20 @@ class InferenceClient:
         self.reader = parent.makefile("rb")
         self.process = None
         log_dir.mkdir(parents=True, exist_ok=True)
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES=gpu,
+        import pynvml as nvml
+
+        nvml.nvmlInit()
+        ordered = sorted(
+            (nvml.nvmlDeviceGetPciInfo(nvml.nvmlDeviceGetHandleByIndex(index)).busId,
+             nvml.nvmlDeviceGetUUID(nvml.nvmlDeviceGetHandleByIndex(index)))
+            for index in range(nvml.nvmlDeviceGetCount())
+        )
+        ordinal = next(index for index, (_, uuid) in enumerate(ordered) if uuid == gpu)
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(ordinal), CUDA_DEVICE_ORDER="PCI_BUS_ID",
                    VLLM_WORKER_MULTIPROC_METHOD="spawn", VLLM_NO_USAGE_STATS="1")
         options = dict(role=role, model=str(model), tokenizer=str(tokenizer), budget=budget,
                        context=context, concurrency=concurrency, version=version,
-                       transfer=transfer)
+                       transfer=transfer, expected_uuid=gpu)
         try:
             with (log_dir / f"{role}.log").open("ab") as log:
                 self.process = subprocess.Popen(

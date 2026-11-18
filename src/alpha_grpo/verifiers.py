@@ -39,11 +39,8 @@ def parse_gold(answer):
     from math_verify import ExprExtractionConfig, LatexExtractionConfig, parse
 
     options = dict(fallback_mode="no_fallback", extraction_mode="first_match", parsing_timeout=3)
-    if "$" not in answer and ("\\" in answer or any(char in answer for char in "^_={}")):
-        parsed = parse(f"${answer}$", extraction_config=(LatexExtractionConfig(),), **options)
-        if parsed:
-            return parsed
-    return parse(answer, extraction_config=(LatexExtractionConfig(), ExprExtractionConfig()), **options)
+    expression = answer.strip().strip("$")
+    return parse(f"${expression}$", extraction_config=(LatexExtractionConfig(),), **options)
 
 
 def math_reward(answer, response, *, allow_text=False):
@@ -80,8 +77,13 @@ def math_reward(answer, response, *, allow_text=False):
 def reward(prompt, response, registry):
     if prompt.task != "ifeval":
         return math_reward(prompt.verifier["answer"], response)
-    return float(bool(response.strip()) and all(
-        registry[item["func_name"]](response, **{
-            key: value for key, value in item.items() if key != "func_name" and value is not None
-        }) for item in prompt.verifier["constraints"]
-    ))
+    from langdetect.lang_detect_exception import LangDetectException
+
+    try:
+        return float(bool(response.strip()) and all(
+            registry[item["func_name"]](response, **{
+                key: value for key, value in item.items() if key != "func_name" and value is not None
+            }) for item in prompt.verifier["constraints"]
+        ))
+    except LangDetectException:
+        return 0.0
