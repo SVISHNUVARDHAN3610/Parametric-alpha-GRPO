@@ -36,6 +36,13 @@ The unit tests run without a model download. The following GPU probes download t
 !{PY} scripts/check_components.py both
 ```
 
+Use the `sync` probe for a short check of one optimizer update and policy weight transfer. It scores two fixed completions with both inference workers, updates the trainer, verifies the synchronized policy weights, generates a short response, and checks that the reference stays frozen. It uses a diagnostic learning rate of `1e-4` so the update is visible in the FP16 weight fingerprint. The model and virtual environment are sufficient inputs. The checkpoint probe also needs space for a temporary FP16 model export.
+
+```python
+!{PY} scripts/check_components.py sync --sync checkpoint
+!{PY} scripts/check_components.py sync --sync nccl
+```
+
 An inference startup failure includes the latest worker output in the traceback. For the full traceback and startup context, read the role's log in that component's directory. A `both` check can write both `policy.log` and `reference.log`.
 
 If Kaggle provides the versioned CUDA driver library without the `libcuda.so` linker name, FlashInfer's JIT build can fail with `cannot find -lcuda`. Each inference worker adds a private linker alias for the driver that PyTorch loaded. The alias lives for the worker's lifetime and uses the existing CUDA installation.
