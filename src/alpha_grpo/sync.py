@@ -33,17 +33,25 @@ class Policy:
         self.acknowledged_version = None
         self.snapshot: Path | None = None
 
-    def _timeout(self):
+    def _timeout(self, operation):
         # The native communicator may block inside CUDA. A poisoned process
         # cannot safely keep training or broadcast another set of weights.
-        (self.root / "nccl-timeout").write_text(
-            "Resume the latest committed checkpoint with checkpoint synchronization.\n",
-            encoding="utf-8",
-        )
-        os._exit(75)
+        message = f"NCCL policy {operation} timed out. See {self.client.log_path}."
+        LOGGER.error("%s", message)
+        try:
+            (self.root / "nccl-timeout").write_text(message + "\n", encoding="utf-8")
+        finally:
+            os._exit(75)
 
-    def _collective(self, request, send):
-        timer = threading.Timer(self.timeout + 10, self._timeout)
+    def _collective(self, operation, send, **arguments):
+        def request():
+            try:
+                return self.client.call(operation, **arguments)
+            except Exception:
+                LOGGER.exception("NCCL policy %s failed. See %s", operation, self.client.log_path)
+                raise
+
+        timer = threading.Timer(self.timeout + 10, self._timeout, args=(operation,))
         timer.daemon = True
         timer.start()
         try:
@@ -65,8 +73,9 @@ class Policy:
                 port = address.getsockname()[1]
             init = dict(master_address="127.0.0.1", master_port=port, world_size=2)
             self.group = self._collective(
-                lambda: self.client.call("init", rank_offset=1, **init),
+                "init",
                 lambda: NCCLWeightTransferEngine.trainer_init(init),
+                rank_offset=1, **init,
             )
         self.client.call("start", version=version)
         parameters = list(self.trainer.model.named_parameters())
@@ -82,7 +91,7 @@ class Policy:
                 )
                 torch.cuda.current_stream().synchronize()
 
-        self._collective(lambda: self.client.call("receive", **metadata), send)
+        self._collective("receive", send, **metadata)
         self.client.call("finish", version=version)
 
     def _checkpoint(self, version):

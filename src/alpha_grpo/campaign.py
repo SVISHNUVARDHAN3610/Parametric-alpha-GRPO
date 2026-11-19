@@ -91,9 +91,15 @@ def inference_launcher(study, gpu, source, root):
     engine = study.engine
 
     def start(role, weights, version, transfer):
+        budget = engine.reference_budget
+        if role == "policy":
+            budget = engine.policy_budget
+            if transfer:
+                # vLLM allocates receive and layer-reload buffers outside its KV cache budget.
+                budget = min(budget, engine.nccl_policy_budget)
         return InferenceClient(
             role=role, gpu=gpu, model=weights, tokenizer=source,
-            budget=engine.policy_budget if role == "policy" else engine.reference_budget,
+            budget=budget,
             context=study.training.max_prompt + study.training.max_completion + 1,
             concurrency=engine.max_sequences, version=version, timeout=engine.timeout_seconds,
             startup_timeout=engine.startup_timeout_seconds,

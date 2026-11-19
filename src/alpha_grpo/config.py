@@ -12,12 +12,15 @@ class EngineConfig:
     sync: str = "auto"
     timeout_seconds: int = 180
     startup_timeout_seconds: int = 600
+    nccl_policy_budget: float = 0.33
 
     def __post_init__(self):
         if min(self.policy_budget, self.reference_budget) <= 0:
             raise ValueError("Both inference budgets must be positive")
         if self.policy_budget + self.reference_budget > 0.90 + 1e-9:
             raise ValueError("Leave at least 10% of GPU 1 unallocated")
+        if not 0 < self.nccl_policy_budget <= 1:
+            raise ValueError("The NCCL policy budget must be in (0, 1]")
         if self.sync not in {"auto", "nccl", "checkpoint"}:
             raise ValueError("Unknown synchronization backend")
         if min(self.max_sequences, self.timeout_seconds, self.startup_timeout_seconds) < 1:

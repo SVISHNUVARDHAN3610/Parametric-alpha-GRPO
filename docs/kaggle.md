@@ -43,6 +43,8 @@ Use the `sync` probe for a short check of one optimizer update and policy weight
 !{PY} scripts/check_components.py sync --sync nccl
 ```
 
+The NCCL-enabled policy uses the smaller of `engine.policy_budget` and `engine.nccl_policy_budget` in `configs/study.yaml`. The default NCCL cap of 33% leaves GPU memory for incoming weights and temporary layer tensors. The frozen reference and checkpoint-backed policy use their own 45% default budgets. If a native transfer stalls, the `nccl-timeout` marker identifies the stalled operation and points to the policy worker log.
+
 An inference startup failure includes the latest worker output in the traceback. For the full traceback and startup context, read the role's log in that component's directory. A `both` check can write both `policy.log` and `reference.log`.
 
 If Kaggle provides the versioned CUDA driver library without the `libcuda.so` linker name, FlashInfer's JIT build can fail with `cannot find -lcuda`. Each inference worker adds a private linker alias for the driver that PyTorch loaded. The alias lives for the worker's lifetime and uses the existing CUDA installation.

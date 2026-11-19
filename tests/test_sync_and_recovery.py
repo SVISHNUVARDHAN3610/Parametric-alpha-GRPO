@@ -5,8 +5,9 @@ from uuid import UUID
 
 import pytest
 
-from alpha_grpo.campaign import _truncate_uncommitted, latest_checkpoint
+from alpha_grpo.campaign import _truncate_uncommitted, inference_launcher, latest_checkpoint
 from alpha_grpo.checkpoint import atomic_directory
+from alpha_grpo.config import EngineConfig, TrainingConfig
 from alpha_grpo.inference import InferenceError
 from alpha_grpo.inference_worker import Engine, checked_device_uuid, configure_cuda_linker
 from alpha_grpo.sync import Policy
@@ -98,6 +99,17 @@ def test_reference_cannot_receive_policy_weights():
         engine.execute("start", version=1)
     with pytest.raises(RuntimeError, match="stale"):
         engine.execute("score", version=1, sequences=[])
+
+
+@pytest.mark.parametrize("policy_budget, expected", [(0.45, 0.33), (0.30, 0.30)])
+def test_nccl_policy_budget_reserves_transfer_headroom(tmp_path, monkeypatch, policy_budget, expected):
+    monkeypatch.setattr("alpha_grpo.campaign.InferenceClient", lambda **options: options)
+    study = SimpleNamespace(engine=EngineConfig(policy_budget=policy_budget), training=TrainingConfig())
+    start = inference_launcher(study, "GPU-test", "source", tmp_path)
+
+    assert start("policy", "source", 0, True)["budget"] == expected
+    assert start("policy", "source", 0, False)["budget"] == policy_budget
+    assert start("reference", "source", 0, False)["budget"] == study.engine.reference_budget
 
 
 def test_failed_native_transfer_uses_checkpoint_before_acknowledging(tmp_path, monkeypatch):

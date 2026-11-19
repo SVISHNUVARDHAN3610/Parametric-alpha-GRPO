@@ -45,7 +45,7 @@ The planned accuracy-versus-length plot compares policies on both axes. Length-d
 
 ## Reproduce on Kaggle
 
-The target environment is Linux with two NVIDIA T4 GPUs. GPU 0 holds the full-parameter PyTorch trainer. GPU 1 hosts two independent FP16 vLLM processes, each configured for 45% of its memory. The rollout process receives current policy weights before the next batch. The reference process scores the same completion tokens using the original DPO checkpoint. The trainer supports NCCL synchronization and a checkpoint-reload fallback. CPU handles grading and optional optimizer offload.
+The target environment is Linux with two NVIDIA T4 GPUs. GPU 0 holds the full-parameter PyTorch trainer. GPU 1 hosts two independent FP16 vLLM processes with 45% memory budgets. An NCCL-enabled policy uses a 33% cap to leave space for weight transfer. The rollout process receives current policy weights before the next batch. The reference process scores the same completion tokens using the original DPO checkpoint. The trainer supports NCCL synchronization and a checkpoint-reload fallback. CPU handles grading and optional optimizer offload.
 
 From a writable checkout in the Kaggle session with internet access and `uv` installed, begin with data preparation and a one-update preflight:
 
