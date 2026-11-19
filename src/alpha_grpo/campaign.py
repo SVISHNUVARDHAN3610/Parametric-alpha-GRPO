@@ -96,6 +96,7 @@ def inference_launcher(study, gpu, source, root):
             budget=engine.policy_budget if role == "policy" else engine.reference_budget,
             context=study.training.max_prompt + study.training.max_completion + 1,
             concurrency=engine.max_sequences, version=version, timeout=engine.timeout_seconds,
+            startup_timeout=engine.startup_timeout_seconds,
             transfer=transfer, log_dir=root,
         )
 

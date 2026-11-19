@@ -40,6 +40,8 @@ An inference startup failure includes the latest worker output in the traceback.
 
 If Kaggle provides the versioned CUDA driver library without the `libcuda.so` linker name, FlashInfer's JIT build can fail with `cannot find -lcuda`. Each inference worker adds a private linker alias for the driver that PyTorch loaded. The alias lives for the worker's lifetime and uses the existing CUDA installation.
 
+The first inference worker in a fresh session can spend several minutes compiling and warming FlashInfer kernels. `engine.startup_timeout_seconds` in `configs/study.yaml` gives each worker 600 seconds to become ready. Once it reports ready, `engine.timeout_seconds` sets the 180-second request timeout and the base timeout for NCCL transfers. Watch the component's worker log for progress during startup.
+
 After the component checks, use the Python launcher with the same stage names and flags as the commands below. The one-update preflight exercises the full training and weight transfer path with the curated dataset.
 
 ```python

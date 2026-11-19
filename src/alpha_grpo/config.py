@@ -11,6 +11,7 @@ class EngineConfig:
     max_sequences: int = 6
     sync: str = "auto"
     timeout_seconds: int = 180
+    startup_timeout_seconds: int = 600
 
     def __post_init__(self):
         if min(self.policy_budget, self.reference_budget) <= 0:
@@ -19,7 +20,7 @@ class EngineConfig:
             raise ValueError("Leave at least 10% of GPU 1 unallocated")
         if self.sync not in {"auto", "nccl", "checkpoint"}:
             raise ValueError("Unknown synchronization backend")
-        if min(self.max_sequences, self.timeout_seconds) < 1:
+        if min(self.max_sequences, self.timeout_seconds, self.startup_timeout_seconds) < 1:
             raise ValueError("Inference sequence and timeout limits must be positive")
 
 

@@ -19,7 +19,7 @@ class InferenceClient:
     """One synchronous inference subprocess with a private inherited socket."""
 
     def __init__(self, *, role, gpu, model, tokenizer, budget, context, concurrency,
-                 version, timeout, transfer, log_dir: Path):
+                 version, startup_timeout, timeout, transfer, log_dir: Path):
         log_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = log_dir / f"{role}.log"
         import pynvml as nvml
@@ -43,7 +43,7 @@ class InferenceClient:
                        context=context, concurrency=concurrency, version=version,
                        transfer=transfer, expected_uuid=gpu)
         parent, child = socket.socketpair()
-        parent.settimeout(timeout)
+        parent.settimeout(startup_timeout)
         self.socket = parent
         self.reader = parent.makefile("rb")
         self.process = None
@@ -65,10 +65,11 @@ class InferenceClient:
         finally:
             child.close()
         try:
-            self.startup = self._receive()
+            self.startup = self._receive("startup")
             if (self.startup["version"] != version or self.startup["role"] != role
                     or self.startup["physical_device"] != gpu):
                 raise InferenceError("Inference worker started with the wrong device, role, or version")
+            parent.settimeout(timeout)
         except BaseException as error:
             self.close()
             if isinstance(error, InferenceError):
@@ -84,11 +85,16 @@ class InferenceClient:
                     error.add_note(tail)
             raise
 
-    def _receive(self):
+    def _receive(self, operation):
         try:
             line = self.reader.readline()
+        except TimeoutError as error:
+            seconds = self.socket.gettimeout()
+            raise InferenceError(
+                f"Inference {operation} timed out after {seconds:g} seconds. See {self.log_path}"
+            ) from error
         except OSError as error:
-            raise InferenceError(f"Inference response timed out or connection failed. See {self.log_path}") from error
+            raise InferenceError(f"Inference connection failed during {operation}. See {self.log_path}") from error
         if not line:
             raise InferenceError(f"Inference worker exited. See {self.log_path}")
         response = json.loads(line)
@@ -103,7 +109,7 @@ class InferenceClient:
             )
         except OSError as error:
             raise InferenceError(f"Could not send {operation} to inference worker") from error
-        return self._receive()
+        return self._receive(operation)
 
     def generate(self, token_ids, *, version, count, max_tokens, temperature, top_p, seed):
         result = self.call("generate", token_ids=token_ids, version=version, count=count,

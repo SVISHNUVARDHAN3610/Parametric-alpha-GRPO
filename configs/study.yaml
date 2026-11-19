@@ -8,6 +8,7 @@ engine:
   max_sequences: 6
   sync: auto
   timeout_seconds: 180
+  startup_timeout_seconds: 600
 training:
   max_prompt: 256
   max_completion: 512
