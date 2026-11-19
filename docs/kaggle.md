@@ -4,6 +4,48 @@ Use a Linux Kaggle session with GPU T4 ×2 and Internet access. Place a checkout
 
 ## Prepare and validate
 
+### Run components from notebook cells
+
+Select **GPU T4 ×2**, enable Internet, and change into your repository checkout with `%cd`. Run the following cells in order. The `PY` variable points at the separate Python 3.11 environment used by the project.
+
+```python
+!nvidia-smi -L
+!uv venv --python 3.11 /kaggle/temp/alpha-grpo-venv
+PY = "/kaggle/temp/alpha-grpo-venv/bin/python"
+A = "/kaggle/working/alpha-grpo"
+%env HF_HOME=/kaggle/temp/alpha-grpo-hf
+!uv pip install --python {PY} --torch-backend=cu129 -e '.[kaggle,evaluation,test]'
+!{PY} -m nltk.downloader punkt punkt_tab
+```
+
+Install `uv` in the Kaggle session with `!python -m pip install uv` if the command is unavailable. Run each of these checks in its own cell so you can see which component fails.
+
+```python
+!{PY} -m pytest -q tests/test_objective.py
+!{PY} -m pytest -q tests/test_data_and_verifiers.py
+!{PY} -m pytest -q tests/test_sync_and_recovery.py
+```
+
+The unit tests run without a model download. The following GPU probes download the configured starting model and use a fixed prompt. `trainer` scores two synthetic completions and performs one optimizer update on GPU 0. `policy` generates and scores a short response on GPU 1. `reference` scores a fixed response on GPU 1. `both` keeps both workers alive together and scores the same generated tokens through both engines. Each command prints a JSON report. Worker logs default to `$A/component-checks/<component>`.
+
+```python
+!{PY} scripts/check_components.py trainer
+!{PY} scripts/check_components.py policy
+!{PY} scripts/check_components.py reference
+!{PY} scripts/check_components.py both
+```
+
+After the component checks, use the Python launcher with the same stage names and flags as the commands below. The one-update preflight exercises the full training and weight transfer path with the curated dataset.
+
+```python
+!{PY} scripts/kaggle.py prepare-data --out {A}/prepared
+!{PY} scripts/kaggle.py prescreen --data {A}/prepared --out {A}/curated
+!{PY} scripts/kaggle.py preflight --data {A}/curated --out {A}/checkpoint-gate --sync checkpoint
+!{PY} scripts/kaggle.py preflight --data {A}/curated --out {A}/nccl-gate --sync nccl
+```
+
+### Run stages from Bash
+
 ```bash
 bash scripts/kaggle.sh setup
 export A=/kaggle/working/alpha-grpo
