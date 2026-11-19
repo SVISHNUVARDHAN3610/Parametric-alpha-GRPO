@@ -3,10 +3,29 @@ from types import SimpleNamespace
 import pytest
 
 from alpha_grpo.analysis import paired_interval
-from alpha_grpo.data import bit_profile, final_question, is_contaminated, lcs_length, shuffled
+from alpha_grpo.data import bit_profile, final_question, is_contaminated, lcs_length, model_snapshot, shuffled
 from alpha_grpo.inference_worker import selected_scores
 from alpha_grpo.records import PromptRecord
 from alpha_grpo.verifiers import constraint_specs, math_reward, reward
+
+
+def test_model_snapshot_includes_bin_only_weights(monkeypatch, tmp_path):
+    from fnmatch import fnmatchcase
+
+    import huggingface_hub
+
+    def download(model, *, revision, allow_patterns):
+        assert revision == "pinned"
+        for name in ("config.json", "pytorch_model.bin"):
+            if any(fnmatchcase(name, pattern) for pattern in allow_patterns):
+                (tmp_path / name).touch()
+        return str(tmp_path)
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "model_info",
+                        lambda *_args, **_kwargs: SimpleNamespace(sha="pinned"))
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", download)
+    assert model_snapshot("allenai/OLMo-2-0425-1B-DPO", "main") == ("pinned", str(tmp_path))
+    assert (tmp_path / "pytorch_model.bin").is_file()
 
 
 def test_lcs_can_match_noncontiguous_tokens():

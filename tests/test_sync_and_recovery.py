@@ -1,12 +1,21 @@
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
 from alpha_grpo.campaign import _truncate_uncommitted, latest_checkpoint
 from alpha_grpo.checkpoint import atomic_directory
 from alpha_grpo.inference import InferenceError
-from alpha_grpo.inference_worker import Engine
+from alpha_grpo.inference_worker import Engine, checked_device_uuid
 from alpha_grpo.sync import Policy
+
+
+def test_device_identity_accepts_nvml_prefix_and_rejects_wrong_gpu():
+    actual = UUID("9f53b41a-67cc-4a77-9985-cc75b129ce48")
+    requested = f"GPU-{str(actual).upper()}"
+    assert checked_device_uuid(list(actual.bytes), requested) == requested
+    with pytest.raises(RuntimeError, match="CUDA device UUID mismatch"):
+        checked_device_uuid(UUID(int=1).bytes, requested)
 
 
 def test_failed_atomic_checkpoint_leaves_no_committed_directory(tmp_path):

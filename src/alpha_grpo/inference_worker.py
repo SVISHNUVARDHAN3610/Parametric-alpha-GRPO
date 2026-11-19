@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import traceback
+from uuid import UUID
 
 
 def selected_scores(ids, rows):
@@ -21,13 +22,21 @@ def selected_scores(ids, rows):
     return values
 
 
+def checked_device_uuid(cuda_uuid_bytes, expected):
+    actual = UUID(bytes=bytes(cuda_uuid_bytes))
+    requested = UUID(expected.lower().removeprefix("gpu-"))
+    if actual != requested:
+        raise RuntimeError(f"CUDA device UUID mismatch on device 0: expected GPU-{requested}, got GPU-{actual}")
+    return expected
+
+
 class Engine:
     def __init__(self, options):
         import torch
 
-        self.physical_device = str(torch.cuda.get_device_properties(0).uuid)
-        if self.physical_device != options["expected_uuid"]:
-            raise RuntimeError("CUDA device UUID differs from the requested physical device")
+        self.physical_device = checked_device_uuid(
+            torch.cuda.get_device_properties(0).uuid.bytes, options["expected_uuid"],
+        )
         from vllm import LLM
         from vllm.config import WeightTransferConfig
 

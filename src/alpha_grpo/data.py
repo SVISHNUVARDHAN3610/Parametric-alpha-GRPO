@@ -71,8 +71,17 @@ def model_snapshot(model, revision):
     from huggingface_hub import HfApi, snapshot_download
 
     sha = HfApi().model_info(model, revision=revision).sha
-    path = snapshot_download(model, revision=sha,
-                             allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja"])
+    path = snapshot_download(
+        model, revision=sha,
+        allow_patterns=[
+            "*.json", "*.safetensors", "pytorch_model.bin", "pytorch_model-*.bin",
+            "*.txt", "*.model", "*.jinja",
+        ],
+    )
+    snapshot = Path(path)
+    if not any(file.is_file() for pattern in ("*.safetensors", "pytorch_model*.bin")
+               for file in snapshot.glob(pattern)):
+        raise FileNotFoundError(f"No model weights found in snapshot for {model}@{sha}: {path}")
     return sha, path
 
 
