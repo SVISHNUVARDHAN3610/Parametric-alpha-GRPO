@@ -3,10 +3,25 @@ from types import SimpleNamespace
 import pytest
 
 from alpha_grpo.analysis import paired_interval
-from alpha_grpo.data import bit_profile, final_question, is_contaminated, lcs_length, model_snapshot, shuffled
+from alpha_grpo.data import (
+    bit_profile, final_question, is_contaminated, lcs_length, model_snapshot,
+    read_prompts, shuffled, write_prompts,
+)
 from alpha_grpo.inference_worker import selected_scores
 from alpha_grpo.records import PromptRecord
 from alpha_grpo.verifiers import constraint_specs, math_reward, reward
+
+
+def test_prompt_jsonl_preserves_unicode_line_separators(tmp_path):
+    rows = [
+        PromptRecord("first", "ifeval", [dict(role="user", content="A\u2028B\u2029C\x85D")],
+                     [1, 2], {"constraints": []}),
+        PromptRecord("second", "gsm8k", [dict(role="user", content="2 + 2?")],
+                     [3, 4], {"answer": "4"}),
+    ]
+    write_prompts(tmp_path, rows)
+
+    assert read_prompts(tmp_path) == rows
 
 
 def test_model_snapshot_includes_bin_only_weights(monkeypatch, tmp_path):

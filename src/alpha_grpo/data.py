@@ -90,8 +90,9 @@ def read_metadata(root):
 
 
 def read_prompts(root):
-    return [PromptRecord(**json.loads(line)) for line in
-            (root / "prompts.jsonl").read_text(encoding="utf-8").splitlines()]
+    # Unicode line separators can be literal characters inside JSON strings.
+    with (root / "prompts.jsonl").open(encoding="utf-8", newline="\n") as stream:
+        return [PromptRecord(**json.loads(line)) for line in stream]
 
 
 def write_prompts(root, rows):
