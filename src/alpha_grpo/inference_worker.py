@@ -55,7 +55,6 @@ class Engine:
             worker_extension_cls="alpha_grpo.weights.FingerprintWorker",
             weight_transfer_config=WeightTransferConfig(backend="nccl") if self.transfer else None,
         )
-        self.eos = self.llm.get_tokenizer().eos_token_id
 
     def execute(self, operation, **args):
         if operation == "health":
@@ -108,10 +107,8 @@ class Engine:
                                         use_tqdm=False)
             for request in outputs:
                 item = request.outputs[0]
+                # With detokenization disabled, vLLM returns the sampled stop token.
                 ids = list(item.token_ids)
-                if item.finish_reason == "stop" and (not ids or ids[-1] != self.eos):
-                    # A suppressed EOS is scored with the teacher-forced path.
-                    ids.append(self.eos)
                 if not ids or len(ids) > max_tokens:
                     raise ValueError("Invalid completion length")
                 completions.append(dict(token_ids=ids, logprobs=selected_scores(ids, item.logprobs),
@@ -132,7 +129,8 @@ class Engine:
             for (prompt, response), output in zip(chunk, outputs, strict=True):
                 if output.prompt_token_ids != prompt + response:
                     raise ValueError("vLLM returned a different scoring sequence")
-                scores = selected_scores(response, output.prompt_logprobs[len(prompt):])
+                rows = output.prompt_logprobs
+                scores = selected_scores(response, rows[len(prompt):] if rows is not None else None)
                 if scores is None:
                     raise ValueError("Missing teacher-forced log probabilities")
                 results.append(scores)

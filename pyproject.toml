@@ -11,8 +11,9 @@ dependencies = ["PyYAML==6.0.2"]
 
 [project.optional-dependencies]
 kaggle = [
-    "vllm==0.21.0",
-    "torch==2.11.0",
+    # vLLM 0.21.0 on PyPI was built for CUDA 13.0. Use the CUDA 12.9 release wheel.
+    "vllm @ https://github.com/vllm-project/vllm/releases/download/v0.21.0/vllm-0.21.0+cu129-cp38-abi3-manylinux_2_34_x86_64.whl#sha256=920777691e340df7a8328adfb1e57b9996dbb537edfb654dd32f70844f5f423d",
+    "torch==2.11.0+cu129",
     "transformers==4.57.6",
     "bitsandbytes==0.49.2",
     "datasets==4.5.0",

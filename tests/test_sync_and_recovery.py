@@ -1,3 +1,4 @@
+import sys
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -16,6 +17,30 @@ def test_device_identity_accepts_nvml_prefix_and_rejects_wrong_gpu():
     assert checked_device_uuid(list(actual.bytes), requested) == requested
     with pytest.raises(RuntimeError, match="CUDA device UUID mismatch"):
         checked_device_uuid(UUID(int=1).bytes, requested)
+
+
+def test_rollout_preserves_sampled_stop_token_and_its_logprob(monkeypatch):
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(SamplingParams=SimpleNamespace))
+    item = SimpleNamespace(token_ids=[23], logprobs=[{23: SimpleNamespace(logprob=-0.5)}],
+                           finish_reason="stop")
+    engine = Engine.__new__(Engine)
+    engine.concurrency = 1
+    engine.llm = SimpleNamespace(generate=lambda *args, **kwargs: [SimpleNamespace(outputs=[item])])
+
+    assert engine.generate([11], count=1, max_tokens=1, temperature=1, top_p=1, seed=42) == [
+        dict(token_ids=[23], logprobs=[-0.5], finish_reason="stop"),
+    ]
+
+
+def test_teacher_forced_scoring_reports_missing_logprobs(monkeypatch):
+    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(SamplingParams=SimpleNamespace))
+    output = SimpleNamespace(prompt_token_ids=[11, 23], prompt_logprobs=None)
+    engine = Engine.__new__(Engine)
+    engine.concurrency = 1
+    engine.llm = SimpleNamespace(generate=lambda *args, **kwargs: [output])
+
+    with pytest.raises(ValueError, match="Missing teacher-forced log probabilities"):
+        engine.score([([11], [23])])
 
 
 def test_failed_atomic_checkpoint_leaves_no_committed_directory(tmp_path):

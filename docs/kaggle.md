@@ -1,6 +1,6 @@
 # Kaggle runbook
 
-Use a Linux Kaggle session with GPU T4 ×2 and Internet access. Place a checkout of this repository in a writable location and run the commands below from its root in that remote session. Install `uv` into the session first if Kaggle does not provide it. The setup selects the CUDA 12.9 PyTorch wheel family for the vLLM 0.21.0 build. A driver, wheel, Torch ABI, or SM75 kernel incompatibility blocks the feasibility run. Capture the installer and worker logs before changing dependencies. [vLLM 0.21.0 GPU requirements](https://docs.vllm.ai/en/v0.21.0/getting_started/installation/gpu/)
+Use a Linux x86-64 Kaggle session with GPU T4 ×2 and Internet access. Place a checkout of this repository in a writable location and run the commands below from its root. The `kaggle` extra pins the CUDA 12.9 release wheel for vLLM 0.21.0 and the matching PyTorch wheel. [vLLM 0.21.0 release wheels](https://github.com/vllm-project/vllm/releases/expanded_assets/v0.21.0)
 
 ## Prepare and validate
 
@@ -15,10 +15,11 @@ PY = "/kaggle/temp/alpha-grpo-venv/bin/python"
 A = "/kaggle/working/alpha-grpo"
 %env HF_HOME=/kaggle/temp/alpha-grpo-hf
 !uv pip install --python {PY} --torch-backend=cu129 -e '.[kaggle,evaluation,test]'
+!uv pip show --python {PY} vllm torch
 !{PY} -m nltk.downloader punkt punkt_tab
 ```
 
-Install `uv` in the Kaggle session with `!python -m pip install uv` if the command is unavailable. Run each of these checks in its own cell so you can see which component fails.
+Install `uv` in the Kaggle session with `!python -m pip install uv` if the command is unavailable. If you already have the virtual environment, rerun the install cell after updating the checkout. The package versions should be `0.21.0+cu129` for vLLM and `2.11.0+cu129` for PyTorch. Run each check in its own cell so you can see which component fails.
 
 ```python
 !{PY} -m pytest -q tests/test_objective.py
@@ -34,6 +35,8 @@ The unit tests run without a model download. The following GPU probes download t
 !{PY} scripts/check_components.py reference
 !{PY} scripts/check_components.py both
 ```
+
+An inference startup failure includes the latest worker output in the traceback. For the full traceback and startup context, read the role's log in that component's directory. A `both` check can write both `policy.log` and `reference.log`.
 
 After the component checks, use the Python launcher with the same stage names and flags as the commands below. The one-update preflight exercises the full training and weight transfer path with the curated dataset.
 
