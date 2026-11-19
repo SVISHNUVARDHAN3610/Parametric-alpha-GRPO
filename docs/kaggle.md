@@ -38,6 +38,8 @@ The unit tests run without a model download. The following GPU probes download t
 
 An inference startup failure includes the latest worker output in the traceback. For the full traceback and startup context, read the role's log in that component's directory. A `both` check can write both `policy.log` and `reference.log`.
 
+If Kaggle provides the versioned CUDA driver library without the `libcuda.so` linker name, FlashInfer's JIT build can fail with `cannot find -lcuda`. Each inference worker adds a private linker alias for the driver that PyTorch loaded. The alias lives for the worker's lifetime and uses the existing CUDA installation.
+
 After the component checks, use the Python launcher with the same stage names and flags as the commands below. The one-update preflight exercises the full training and weight transfer path with the curated dataset.
 
 ```python

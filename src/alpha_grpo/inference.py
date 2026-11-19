@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .records import Completion
 
@@ -46,7 +47,10 @@ class InferenceClient:
         self.socket = parent
         self.reader = parent.makefile("rb")
         self.process = None
+        self.cuda_link_dir = None
         try:
+            self.cuda_link_dir = TemporaryDirectory(prefix="alpha-grpo-cuda-")
+            options["cuda_link_dir"] = self.cuda_link_dir.name
             with self.log_path.open("ab") as log:
                 log_start = log.seek(0, os.SEEK_END)
                 self.process = subprocess.Popen(
@@ -120,23 +124,27 @@ class InferenceClient:
         return results
 
     def close(self):
-        self.reader.close()
-        self.socket.close()
-        if self.process is None:
-            return
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(self.process.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                continue
-            # Kill any engine descendants that survived the worker exit.
-            if sig == signal.SIGKILL:
-                break
-        self.process.wait(timeout=10)
+        try:
+            self.reader.close()
+            self.socket.close()
+            if self.process is None:
+                return
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(self.process.pid, sig)
+                except ProcessLookupError:
+                    break
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    continue
+                # Kill any engine descendants that survived the worker exit.
+                if sig == signal.SIGKILL:
+                    break
+            self.process.wait(timeout=10)
+        finally:
+            if self.cuda_link_dir is not None:
+                self.cuda_link_dir.cleanup()
 
     def __enter__(self):
         return self

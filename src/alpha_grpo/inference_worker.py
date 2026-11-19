@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 from uuid import UUID
 
 
@@ -30,6 +31,30 @@ def checked_device_uuid(cuda_uuid_bytes, expected):
     return expected
 
 
+def configure_cuda_linker(directory: Path, maps: Path = Path("/proc/self/maps")):
+    """Expose the loaded CUDA driver under the name required by `-lcuda`."""
+    try:
+        mappings = maps.open(encoding="utf-8", errors="surrogateescape")
+    except OSError:
+        return
+    with mappings:
+        for mapping in mappings:
+            fields = mapping.rstrip("\n").split(maxsplit=5)
+            if len(fields) < 6:
+                continue
+            driver = Path(fields[5])
+            if not driver.is_absolute() or not (
+                driver.name == "libcuda.so" or driver.name.startswith("libcuda.so.")
+            ) or not driver.is_file():
+                continue
+            (directory / "libcuda.so").symlink_to(driver)
+            search_path = os.environ.get("LIBRARY_PATH")
+            os.environ["LIBRARY_PATH"] = (
+                f"{search_path}{os.pathsep}{directory}" if search_path else str(directory)
+            )
+            return
+
+
 class Engine:
     def __init__(self, options):
         import torch
@@ -37,6 +62,9 @@ class Engine:
         self.physical_device = checked_device_uuid(
             torch.cuda.get_device_properties(0).uuid.bytes, options["expected_uuid"],
         )
+        # PyTorch has loaded the versioned driver. JIT builds in the vLLM child
+        # inherit the private link directory through the compiler search path.
+        configure_cuda_linker(Path(options["cuda_link_dir"]))
         from vllm import LLM
         from vllm.config import WeightTransferConfig
 

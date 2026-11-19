@@ -1,3 +1,4 @@
+import os
 import sys
 from types import SimpleNamespace
 from uuid import UUID
@@ -7,7 +8,7 @@ import pytest
 from alpha_grpo.campaign import _truncate_uncommitted, latest_checkpoint
 from alpha_grpo.checkpoint import atomic_directory
 from alpha_grpo.inference import InferenceError
-from alpha_grpo.inference_worker import Engine, checked_device_uuid
+from alpha_grpo.inference_worker import Engine, checked_device_uuid, configure_cuda_linker
 from alpha_grpo.sync import Policy
 
 
@@ -17,6 +18,29 @@ def test_device_identity_accepts_nvml_prefix_and_rejects_wrong_gpu():
     assert checked_device_uuid(list(actual.bytes), requested) == requested
     with pytest.raises(RuntimeError, match="CUDA device UUID mismatch"):
         checked_device_uuid(UUID(int=1).bytes, requested)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux inference worker")
+def test_cuda_linker_uses_loaded_driver_and_preserves_search_path(tmp_path, monkeypatch):
+    driver = tmp_path / "driver libraries" / "libcuda.so.580.95.05"
+    driver.parent.mkdir()
+    driver.touch()
+    runtime = driver.with_name("libcudart.so.12")
+    runtime.touch()
+    link_directory = tmp_path / "worker-links"
+    link_directory.mkdir()
+    maps = tmp_path / "maps"
+    maps.write_text(
+        f"1000-2000 r-xp 00000000 00:01 1 {runtime}\n"
+        f"2000-3000 r-xp 00000000 00:01 2 {driver}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LIBRARY_PATH", "/opt/compiler/lib")
+
+    configure_cuda_linker(link_directory, maps)
+
+    assert (link_directory / "libcuda.so").readlink() == driver
+    assert os.environ["LIBRARY_PATH"].split(os.pathsep) == ["/opt/compiler/lib", str(link_directory)]
 
 
 def test_rollout_preserves_sampled_stop_token_and_its_logprob(monkeypatch):
