@@ -85,6 +85,15 @@ def model_snapshot(model, revision):
     return sha, path
 
 
+def load_tokenizer(source, chat_template=None):
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(source)
+    if chat_template is not None:
+        tokenizer.chat_template = chat_template
+    return tokenizer
+
+
 def read_metadata(root):
     return json.loads((root / "manifest.json").read_text(encoding="utf-8"))
 
@@ -124,10 +133,9 @@ def _verifier_source(path, revision):
 
 def prepare(study, output, verifier_revision):
     from huggingface_hub import HfApi
-    from transformers import AutoTokenizer
 
     model_sha, source = model_snapshot(study.model, study.model_revision)
-    tokenizer = AutoTokenizer.from_pretrained(source)
+    tokenizer = load_tokenizer(source, study.chat_template)
     dataset_sha, rows = _dataset(study.dataset, None, "train", revision=study.dataset_revision)
     math_sha, originals = _dataset(MATH_SOURCE, "default", "train")
     levels = defaultdict(list)
@@ -203,6 +211,8 @@ def prepare(study, output, verifier_revision):
             verifier_revision=verifier_sha, verifier_digest=verifier_digest, audit=audit,
             stage="prepared", prompts_sha256=digest(temporary / "prompts.jsonl"),
         )
+        if study.chat_template is not None:
+            manifest["chat_template"] = study.chat_template
         (temporary / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 

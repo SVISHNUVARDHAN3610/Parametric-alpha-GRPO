@@ -86,6 +86,29 @@ bash scripts/kaggle.sh smoke --data "$A/curated" --out "$A/smoke" --resume
 
 Pass your selected `--optimizer`, `--sync`, and storage options on both commands. Confirm the second segment starts at version 15 and finishes at version 30. Review free GPU memory on both devices, host memory, disk, step time, and token throughput before committing a session to a full run. A 1 GiB minimum sampled margin is the configured gate. The original proposal's step-time target is informational.
 
+## Qwen3 DPO pilot
+
+Use `configs/study-qwen-dpo.yaml` to test the 0.6B Tandogan DPO checkpoint. This profile budgets 30% of GPU 1 for each inference worker and caps the NCCL policy at 27%. The checkpoint supplies no chat template, so this profile renders messages as plain text separated by blank lines. The prepared manifest records the template for use in evaluation. [Pinned checkpoint](https://huggingface.co/Tandogan/MNLP_M2_dpo_model/tree/ceb4140cb4da04cf23ace86f5f5938037f69d354)
+
+Run the short sync probes before starting prescreen. Each probe also exercises the trainer, prompt formatting, and both inference workers without a curated dataset. Check for policy version 1 and `reference_unchanged: true`.
+
+```python
+QCFG = "configs/study-qwen-dpo.yaml"
+QWEN = f"{A}/qwen-dpo"
+!{PY} scripts/check_components.py sync --config {QCFG} --sync checkpoint --out {QWEN}/check-sync-checkpoint
+!{PY} scripts/check_components.py sync --config {QCFG} --sync nccl --out {QWEN}/check-sync-nccl
+```
+
+After the probes pass, build a fresh dataset for Qwen. Prescreen uses the starting model's responses to select prompts, and the manifest pins the model, tokenizer revision, and prompt template. Keep the Qwen data and run directories separate from the original OLMo study.
+
+```python
+!{PY} scripts/kaggle.py --config {QCFG} prepare-data --out {QWEN}/prepared
+!{PY} scripts/kaggle.py --config {QCFG} prescreen --data {QWEN}/prepared --out {QWEN}/curated
+!{PY} scripts/kaggle.py --config {QCFG} preflight --data {QWEN}/curated --out {QWEN}/preflight-nccl --sync nccl
+```
+
+The probe checks one short update. Use the study-sized preflight to measure the actual GPU headroom.
+
 ## Run the study in stages
 
 ```bash

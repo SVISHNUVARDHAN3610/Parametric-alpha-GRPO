@@ -81,6 +81,7 @@ class Study:
     engine: EngineConfig = field(default_factory=EngineConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     experiments: dict[str, Experiment] = field(default_factory=dict)
+    chat_template: str | None = None
 
 
 def load_study(path: Path) -> Study:

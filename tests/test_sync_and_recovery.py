@@ -6,11 +6,12 @@ from uuid import UUID
 import pytest
 
 from alpha_grpo.campaign import _truncate_uncommitted, inference_launcher, latest_checkpoint
-from alpha_grpo.checkpoint import atomic_directory
+from alpha_grpo.checkpoint import atomic_directory, export_model
 from alpha_grpo.config import EngineConfig, TrainingConfig
 from alpha_grpo.inference import InferenceError
 from alpha_grpo.inference_worker import Engine, checked_device_uuid, configure_cuda_linker
 from alpha_grpo.sync import Policy
+from alpha_grpo.weights import model_fingerprint
 
 
 def test_device_identity_accepts_nvml_prefix_and_rejects_wrong_gpu():
@@ -99,6 +100,38 @@ def test_reference_cannot_receive_policy_weights():
         engine.execute("start", version=1)
     with pytest.raises(RuntimeError, match="stale"):
         engine.execute("score", version=1, sequences=[])
+
+
+def test_tied_embeddings_are_fingerprinted_and_exported(tmp_path):
+    import torch
+    from torch import nn
+
+    model = nn.Module()
+    model.model = nn.Module()
+    model.model.embed_tokens = nn.Embedding(8, 4)
+    model.model.norm = nn.LayerNorm(4)
+    model.lm_head = nn.Linear(4, 8, bias=False)
+    embedding = model.model.embed_tokens.weight
+    model.lm_head.weight = nn.Parameter(embedding.detach().clone())
+    untied_fingerprint = model_fingerprint(model)
+
+    model.lm_head.weight = embedding
+    assert "lm_head.weight" not in dict(model.named_parameters())
+    assert model_fingerprint(model) == untied_fingerprint
+    with torch.no_grad():
+        embedding.fill_(32.0)
+    assert model_fingerprint(model) != untied_fingerprint
+
+    def save_pretrained(_path, *, state_dict, **_options):
+        exported = state_dict["model.embed_tokens.weight"]
+        assert state_dict["lm_head.weight"] is exported
+        assert exported.dtype == torch.float16
+
+    model.save_pretrained = save_pretrained
+    tokenizer = SimpleNamespace(save_pretrained=lambda _path: None)
+    destination = tmp_path / "weights"
+    export_model(model, tokenizer, destination)
+    assert (destination / "complete").is_file()
 
 
 @pytest.mark.parametrize("policy_budget, expected", [(0.45, 0.33), (0.30, 0.30)])

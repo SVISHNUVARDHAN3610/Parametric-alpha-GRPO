@@ -26,9 +26,14 @@ def export_model(model, tokenizer, destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
     require_space(destination.parent, sum(p.numel() for p in model.parameters()) * 2 + 64 * 2**20)
     with atomic_directory(destination) as temporary:
-        state = {name: value.detach().to(device="cpu", dtype=(
-                     torch.float16 if value.is_floating_point() else value.dtype))
-                 for name, value in model.state_dict().items()}
+        state = {}
+        converted = {}
+        for name, value in model.state_dict(keep_vars=True).items():
+            # Preserve tied parameters so save_pretrained can serialize one copy.
+            if id(value) not in converted:
+                dtype = torch.float16 if value.is_floating_point() else value.dtype
+                converted[id(value)] = value.detach().to(device="cpu", dtype=dtype)
+            state[name] = converted[id(value)]
         model.save_pretrained(temporary, state_dict=state, max_shard_size="2GB",
                               safe_serialization=True)
         tokenizer.save_pretrained(temporary)

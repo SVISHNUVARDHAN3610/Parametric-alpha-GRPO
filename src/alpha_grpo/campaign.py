@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import mean
 
 from .checkpoint import atomic_directory, export_model, load_resume, require_space, save_resume
-from .data import TASKS, digest, load_curated, model_snapshot, shuffled, write_prompts
+from .data import TASKS, digest, load_curated, load_tokenizer, model_snapshot, shuffled, write_prompts
 from .inference import InferenceClient, InferenceError
 from .records import Group, RolloutBatch, RunState, Trajectory
 from .sync import Policy
@@ -110,17 +110,17 @@ def inference_launcher(study, gpu, source, root):
 
 
 def _model_and_verifier(study, data, stage):
-    from transformers import AutoTokenizer
-
     manifest, rows = load_curated(data, stage)
     if manifest["model"] != study.model or manifest["dataset"] != study.dataset:
         raise ValueError("Dataset manifest belongs to a different study")
     if study.model_revision != "main" and not manifest["model_revision"].startswith(study.model_revision):
         raise ValueError("Model revision differs from the prepared dataset")
+    if manifest.get("chat_template") != study.chat_template:
+        raise ValueError("Prompt template differs from the prepared dataset")
     revision, source = model_snapshot(study.model, manifest["model_revision"])
     if revision != manifest["model_revision"]:
         raise ValueError("Model snapshot changed")
-    tokenizer = AutoTokenizer.from_pretrained(source)
+    tokenizer = load_tokenizer(source, study.chat_template)
     registry = load_registry(data / "if_functions.py", manifest["verifier_digest"])
     return manifest, rows, source, tokenizer, registry
 

@@ -1,0 +1,42 @@
+model: Tandogan/MNLP_M2_dpo_model
+model_revision: ceb4140cb4da04cf23ace86f5f5938037f69d354
+# The checkpoint uses plain prompts and supplies no tokenizer template.
+chat_template: >-
+  {{ messages | map(attribute='content') | join('\n\n') }}
+  {%- if add_generation_prompt %}{{ '\n\n' }}{% endif %}
+dataset: allenai/RLVR-GSM-MATH-IF-Mixed-Constraints
+dataset_revision: main
+engine:
+  policy_budget: 0.30
+  reference_budget: 0.30
+  nccl_policy_budget: 0.27
+  max_sequences: 6
+  sync: auto
+  timeout_seconds: 180
+  startup_timeout_seconds: 600
+training:
+  max_prompt: 256
+  max_completion: 512
+  prompts_per_step: 4
+  group_size: 6
+  microbatch: 1
+  logprob_chunk: 128
+  steps: 375
+  lr: 0.0000015
+  beta: 0.01
+  clip_low: 0.20
+  clip_high: 0.28
+  filter_cap: 40
+  optimizer: gpu
+experiments:
+  control-a0: {alpha: 0.0, seeds: [42, 1337]}
+  control-a05: {alpha: 0.5, seeds: [42, 1337]}
+  control-a1: {alpha: 1.0, seeds: [42, 1337]}
+  control-std: {alpha: 0.0, normalize_std: true, seeds: [42, 1337]}
+  control-filter: {alpha: 0.5, filter_constant: true, seeds: [42, 1337]}
+  proposal-a: {alpha: 0.0, normalize_std: true, anchored: false, temperature: 0.9, top_p: 0.95}
+  proposal-b: {alpha: 1.0, anchored: false, temperature: 0.9, top_p: 0.95}
+  proposal-c: {alpha: 0.5, anchored: false, temperature: 0.9, top_p: 0.95}
+  proposal-d: {alpha: 0.5, filter_constant: true, anchored: false, temperature: 0.9, top_p: 0.95}
+  scale-a05: {alpha: 0.5, anchored: false}
+  scale-a1: {alpha: 1.0, anchored: false}

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from alpha_grpo.campaign import hardware, inference_launcher
 from alpha_grpo.config import load_study
-from alpha_grpo.data import model_snapshot
+from alpha_grpo.data import load_tokenizer, model_snapshot
 from alpha_grpo.records import Completion, Group, PromptRecord, RolloutBatch, Trajectory
 from alpha_grpo.sync import Policy
 
@@ -136,9 +136,7 @@ def main():
         raise RuntimeError("Expected a T4 as the second physical GPU")
     revision, source = model_snapshot(study.model, study.model_revision)
 
-    from transformers import AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(source)
+    tokenizer = load_tokenizer(source, study.chat_template)
     prompt = tokenizer.apply_chat_template(
         [{"role": "user", "content": "What is 2 + 2?"}], tokenize=True,
         add_generation_prompt=True, return_dict=False,
