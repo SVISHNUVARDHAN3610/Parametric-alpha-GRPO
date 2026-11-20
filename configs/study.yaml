@@ -5,9 +5,11 @@ dataset_revision: main
 engine:
   policy_budget: 0.45
   reference_budget: 0.45
+  nccl_policy_budget: 0.33
   max_sequences: 6
   sync: auto
   timeout_seconds: 180
+  startup_timeout_seconds: 600
 training:
   max_prompt: 256
   max_completion: 512

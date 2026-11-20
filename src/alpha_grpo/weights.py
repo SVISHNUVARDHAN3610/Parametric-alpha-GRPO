@@ -4,11 +4,11 @@ import hashlib
 def model_fingerprint(model):
     import torch
 
-    parameters = dict(model.named_parameters())
     names = ("model.embed_tokens.weight", "model.norm.weight", "lm_head.weight")
     digest = hashlib.sha256()
     for name in names:
-        parameter = parameters[name].detach()
+        # A tied output embedding may be omitted by named_parameters().
+        parameter = model.get_parameter(name).detach()
         # Sample across each tensor without allocating a whole FP16 copy.
         stride = max(1, parameter.numel() // 4096)
         sample = parameter.flatten()[::stride].to(device="cpu", dtype=torch.float16)

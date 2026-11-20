@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from .checkpoint import atomic_directory
-from .data import model_snapshot, read_metadata
+from .data import load_tokenizer, model_snapshot, read_metadata
 from .verifiers import math_reward
 
 TASKS = {
@@ -80,7 +80,10 @@ def evaluate(model, revision, data, output, tasks, device, greedy_only, limit,
                 raise ValueError("Evaluation choice exceeds model context")
             return super()._loglikelihood_tokens(requests, *args, **kwargs)
 
-    lm = StrictHFLM(pretrained=source, dtype=torch.float16 if device == "gpu" else torch.float32,
+    chat_template = manifest.get("chat_template")
+    tokenizer = load_tokenizer(source, chat_template) if chat_template is not None else None
+    lm = StrictHFLM(pretrained=source, tokenizer=tokenizer,
+                    dtype=torch.float16 if device == "gpu" else torch.float32,
                     device="cuda:0" if device == "gpu" else "cpu", batch_size=1, max_length=4096,
                     truncation=False)
     manager = PinnedTasks()
@@ -88,6 +91,7 @@ def evaluate(model, revision, data, output, tasks, device, greedy_only, limit,
         (temporary / "protocol.json").write_text(json.dumps(dict(
             model=model, model_revision=model_revision, datasets=benchmarks, limit=limit,
             tasks=tasks, device=device, fewshot_seed=42, max_new_tokens=512,
+            chat_template=chat_template,
             label=label or output.name, training_seed=training_seed,
             checkpoint_step=(int(Path(model).name[5:]) if Path(model).name.startswith("step-")
                              and Path(model).name[5:].isdigit() else None),

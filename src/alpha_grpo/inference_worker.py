@@ -7,6 +7,8 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
+from uuid import UUID
 
 
 def selected_scores(ids, rows):
@@ -21,13 +23,48 @@ def selected_scores(ids, rows):
     return values
 
 
+def checked_device_uuid(cuda_uuid_bytes, expected):
+    actual = UUID(bytes=bytes(cuda_uuid_bytes))
+    requested = UUID(expected.lower().removeprefix("gpu-"))
+    if actual != requested:
+        raise RuntimeError(f"CUDA device UUID mismatch on device 0: expected GPU-{requested}, got GPU-{actual}")
+    return expected
+
+
+def configure_cuda_linker(directory: Path, maps: Path = Path("/proc/self/maps")):
+    """Expose the loaded CUDA driver under the name required by `-lcuda`."""
+    try:
+        mappings = maps.open(encoding="utf-8", errors="surrogateescape")
+    except OSError:
+        return
+    with mappings:
+        for mapping in mappings:
+            fields = mapping.rstrip("\n").split(maxsplit=5)
+            if len(fields) < 6:
+                continue
+            driver = Path(fields[5])
+            if not driver.is_absolute() or not (
+                driver.name == "libcuda.so" or driver.name.startswith("libcuda.so.")
+            ) or not driver.is_file():
+                continue
+            (directory / "libcuda.so").symlink_to(driver)
+            search_path = os.environ.get("LIBRARY_PATH")
+            os.environ["LIBRARY_PATH"] = (
+                f"{search_path}{os.pathsep}{directory}" if search_path else str(directory)
+            )
+            return
+
+
 class Engine:
     def __init__(self, options):
         import torch
 
-        self.physical_device = str(torch.cuda.get_device_properties(0).uuid)
-        if self.physical_device != options["expected_uuid"]:
-            raise RuntimeError("CUDA device UUID differs from the requested physical device")
+        self.physical_device = checked_device_uuid(
+            torch.cuda.get_device_properties(0).uuid.bytes, options["expected_uuid"],
+        )
+        # PyTorch has loaded the versioned driver. JIT builds in the vLLM child
+        # inherit the private link directory through the compiler search path.
+        configure_cuda_linker(Path(options["cuda_link_dir"]))
         from vllm import LLM
         from vllm.config import WeightTransferConfig
 
@@ -46,7 +83,6 @@ class Engine:
             worker_extension_cls="alpha_grpo.weights.FingerprintWorker",
             weight_transfer_config=WeightTransferConfig(backend="nccl") if self.transfer else None,
         )
-        self.eos = self.llm.get_tokenizer().eos_token_id
 
     def execute(self, operation, **args):
         if operation == "health":
@@ -99,10 +135,8 @@ class Engine:
                                         use_tqdm=False)
             for request in outputs:
                 item = request.outputs[0]
+                # With detokenization disabled, vLLM returns the sampled stop token.
                 ids = list(item.token_ids)
-                if item.finish_reason == "stop" and (not ids or ids[-1] != self.eos):
-                    # A suppressed EOS is scored with the teacher-forced path.
-                    ids.append(self.eos)
                 if not ids or len(ids) > max_tokens:
                     raise ValueError("Invalid completion length")
                 completions.append(dict(token_ids=ids, logprobs=selected_scores(ids, item.logprobs),
@@ -123,7 +157,8 @@ class Engine:
             for (prompt, response), output in zip(chunk, outputs, strict=True):
                 if output.prompt_token_ids != prompt + response:
                     raise ValueError("vLLM returned a different scoring sequence")
-                scores = selected_scores(response, output.prompt_logprobs[len(prompt):])
+                rows = output.prompt_logprobs
+                scores = selected_scores(response, rows[len(prompt):] if rows is not None else None)
                 if scores is None:
                     raise ValueError("Missing teacher-forced log probabilities")
                 results.append(scores)

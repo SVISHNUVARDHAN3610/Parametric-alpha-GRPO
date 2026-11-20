@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from .records import Completion
 
@@ -18,29 +19,40 @@ class InferenceClient:
     """One synchronous inference subprocess with a private inherited socket."""
 
     def __init__(self, *, role, gpu, model, tokenizer, budget, context, concurrency,
-                 version, timeout, transfer, log_dir: Path):
-        parent, child = socket.socketpair()
-        parent.settimeout(timeout)
-        self.socket = parent
-        self.reader = parent.makefile("rb")
-        self.process = None
+                 version, startup_timeout, timeout, transfer, log_dir: Path):
         log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path = log_dir / f"{role}.log"
         import pynvml as nvml
 
         nvml.nvmlInit()
-        ordered = sorted(
-            (nvml.nvmlDeviceGetPciInfo(nvml.nvmlDeviceGetHandleByIndex(index)).busId,
-             nvml.nvmlDeviceGetUUID(nvml.nvmlDeviceGetHandleByIndex(index)))
-            for index in range(nvml.nvmlDeviceGetCount())
-        )
-        ordinal = next(index for index, (_, uuid) in enumerate(ordered) if uuid == gpu)
+        try:
+            ordered = sorted(
+                (nvml.nvmlDeviceGetPciInfo(handle).busId, nvml.nvmlDeviceGetUUID(handle))
+                for handle in (nvml.nvmlDeviceGetHandleByIndex(index)
+                               for index in range(nvml.nvmlDeviceGetCount()))
+            )
+        finally:
+            nvml.nvmlShutdown()
+        ordinal = next((index for index, (_, uuid) in enumerate(ordered) if uuid == gpu), None)
+        if ordinal is None:
+            raise InferenceError(f"Inference GPU {gpu} was not found by NVML")
         env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(ordinal), CUDA_DEVICE_ORDER="PCI_BUS_ID",
-                   VLLM_WORKER_MULTIPROC_METHOD="spawn", VLLM_NO_USAGE_STATS="1")
+                   VLLM_WORKER_MULTIPROC_METHOD="spawn", VLLM_NO_USAGE_STATS="1",
+                   PYTHONUNBUFFERED="1")
         options = dict(role=role, model=str(model), tokenizer=str(tokenizer), budget=budget,
                        context=context, concurrency=concurrency, version=version,
                        transfer=transfer, expected_uuid=gpu)
+        parent, child = socket.socketpair()
+        parent.settimeout(startup_timeout)
+        self.socket = parent
+        self.reader = parent.makefile("rb")
+        self.process = None
+        self.cuda_link_dir = None
         try:
-            with (log_dir / f"{role}.log").open("ab") as log:
+            self.cuda_link_dir = TemporaryDirectory(prefix="alpha-grpo-cuda-")
+            options["cuda_link_dir"] = self.cuda_link_dir.name
+            with self.log_path.open("ab") as log:
+                log_start = log.seek(0, os.SEEK_END)
                 self.process = subprocess.Popen(
                     [sys.executable, "-m", "alpha_grpo.inference_worker",
                      str(child.fileno()), json.dumps(options)],
@@ -53,21 +65,38 @@ class InferenceClient:
         finally:
             child.close()
         try:
-            self.startup = self._receive()
+            self.startup = self._receive("startup")
             if (self.startup["version"] != version or self.startup["role"] != role
                     or self.startup["physical_device"] != gpu):
                 raise InferenceError("Inference worker started with the wrong device, role, or version")
-        except BaseException:
+            parent.settimeout(timeout)
+        except BaseException as error:
             self.close()
+            if isinstance(error, InferenceError):
+                error.add_note(f"{role} worker log: {self.log_path}")
+                try:
+                    with self.log_path.open("rb") as log:
+                        end = log.seek(0, os.SEEK_END)
+                        log.seek(max(log_start, end - 16 * 1024))
+                        tail = log.read().decode("utf-8", errors="replace").strip()
+                except OSError:
+                    tail = ""
+                if tail:
+                    error.add_note(tail)
             raise
 
-    def _receive(self):
+    def _receive(self, operation):
         try:
             line = self.reader.readline()
+        except TimeoutError as error:
+            seconds = self.socket.gettimeout()
+            raise InferenceError(
+                f"Inference {operation} timed out after {seconds:g} seconds. See {self.log_path}"
+            ) from error
         except OSError as error:
-            raise InferenceError("Inference response timed out or connection failed") from error
+            raise InferenceError(f"Inference connection failed during {operation}. See {self.log_path}") from error
         if not line:
-            raise InferenceError("Inference worker exited. See its log.")
+            raise InferenceError(f"Inference worker exited. See {self.log_path}")
         response = json.loads(line)
         if "error" in response:
             raise InferenceError(response["error"])
@@ -80,7 +109,7 @@ class InferenceClient:
             )
         except OSError as error:
             raise InferenceError(f"Could not send {operation} to inference worker") from error
-        return self._receive()
+        return self._receive(operation)
 
     def generate(self, token_ids, *, version, count, max_tokens, temperature, top_p, seed):
         result = self.call("generate", token_ids=token_ids, version=version, count=count,
@@ -101,23 +130,27 @@ class InferenceClient:
         return results
 
     def close(self):
-        self.reader.close()
-        self.socket.close()
-        if self.process is None:
-            return
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(self.process.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                continue
-            # Kill any engine descendants that survived the worker exit.
-            if sig == signal.SIGKILL:
-                break
-        self.process.wait(timeout=10)
+        try:
+            self.reader.close()
+            self.socket.close()
+            if self.process is None:
+                return
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(self.process.pid, sig)
+                except ProcessLookupError:
+                    break
+                try:
+                    self.process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    continue
+                # Kill any engine descendants that survived the worker exit.
+                if sig == signal.SIGKILL:
+                    break
+            self.process.wait(timeout=10)
+        finally:
+            if self.cuda_link_dir is not None:
+                self.cuda_link_dir.cleanup()
 
     def __enter__(self):
         return self
